@@ -24,18 +24,34 @@ app.post('/generate-pdf', async (req, res) => {
     const executablePath = await chromium.executablePath();
 
     browser = await puppeteer.launch({
-      args: chromium.args,
+      args: [...chromium.args, '--disable-dev-shm-usage'],
       defaultViewport: chromium.defaultViewport,
       executablePath,
       headless: chromium.headless,
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    // Ne pas bloquer indéfiniment sur des images lentes/cassées
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    // Attendre que toutes les images aient fini de charger (ou échoué), max 30s
+    await page.evaluate(() => {
+      const imgs = Array.from(document.images);
+      return Promise.all(imgs.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.addEventListener('load', resolve);
+          img.addEventListener('error', resolve);
+          setTimeout(resolve, 30000);
+        });
+      }));
+    });
 
     const pdfBuffer = await page.pdf({
       printBackground: true,
       preferCSSPageSize: true,
+      timeout: 120000,
     });
 
     await browser.close();
